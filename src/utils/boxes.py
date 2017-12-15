@@ -28,8 +28,8 @@ def create_anchors(step=1):
     anchors = []#np.zeros(())
     anchors3D = []
 
-    for x in np.arange(cfg.TOP_X_MIN, cfg.TOP_X_MAX, cfg.TOP_X_DIVISION*step):
-        for y in np.arange(cfg.TOP_Y_MIN, cfg.TOP_Y_MAX, cfg.TOP_Y_DIVISION*step):
+    for x in np.arange(cfg.TOP_X_MAX, cfg.TOP_X_MIN, -cfg.TOP_X_DIVISION*step):
+        for y in np.arange(cfg.TOP_Y_MAX, cfg.TOP_Y_MIN, -cfg.TOP_Y_DIVISION*step):
             anchor = [x, y, cfg.ANCHOR_Z, cfg.ANCHOR_LENGTH, cfg.ANCHOR_WIDTH, cfg.ANCHOR_HEIGHT, 0]
             anchors.append(anchor)
             anchor = [x, y, cfg.ANCHOR_Z, cfg.ANCHOR_LENGTH, cfg.ANCHOR_WIDTH, cfg.ANCHOR_HEIGHT, math.radians(90)]
