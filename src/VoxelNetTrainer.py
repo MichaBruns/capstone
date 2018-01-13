@@ -134,11 +134,18 @@ class VoxelNetTrainer():
         else:
             print('\nCan not found progress file')
 
-    def train(self, maxIter):
-
-
+    def validate(self, maxIter):
         for iter in range(maxIter):
+            print("Validating {} from {}".format(iter, maxIter))
+            # get the data
+            self.batch_rgb_images, self.batch_top_view, self.batch_front_view, \
+            self.batch_gt_labels, self.batch_gt_boxes3d, self.frame_id = \
+                self.validation_set.load()
 
+            self.save_projection('validation')
+
+    def train(self, maxIter):
+        for iter in range(maxIter):
             if iter % 1000 == 0:
                 cls_loss, reg_loss, target_loss = self.iteration(self.n_global_step, validation=True, writeSummary=True)
 
@@ -164,6 +171,14 @@ class VoxelNetTrainer():
 
             self.n_global_step+=1
 
+    def save_projection(self, dir=None):
+        proposals, scores, probs, conv = self.predict(self.batch_top_view)
+        nms_proposals, nms_scores = self.post_process(proposals, probs, minProb=0.3)
+        prediction_on_rgb = nud.draw_box3d_on_camera(self.batch_rgb_images[0], nms_proposals,
+                                                     text_lables=[])
+        cv2.imwrite(dir + '/' + self.frame_id.replace('/','_') + '.png', prediction_on_rgb)
+
+
     def iteration_summary(self, prefix, summaryWriter):
         # get the indices of pos+neg, positive anchors as well as labels and regression targets
         top_inds, pos_inds, labels, targets = self.voxelnet.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
@@ -171,6 +186,8 @@ class VoxelNetTrainer():
 
         self.log_image(step=self.n_global_step, prefix=prefix, frame_tag=self.frame_id, summary_writer=summaryWriter)
         proposals, scores, probs, conv = self.predict(self.batch_top_view)
+        nms_proposals, nms_scores = self.post_process(proposals, probs, minProb=-1)
+
         self.summary_image(scores[0, :, :, 1], prefix + '/proposalMap', summaryWriter,
                            step=self.n_global_step)
         self.summary_image(probs[0, :, :, 0], prefix + '/probabilities0', summaryWriter,
@@ -180,32 +197,38 @@ class VoxelNetTrainer():
 
         # print proposals
         proposalsFlat = proposals.reshape(-1, 7)
-        proposalIdx = (probs > 0.5).flatten()
-
+        proposalIdx = (probs > 0.2).flatten()
+        numProposals = np.sum(proposalIdx)
         Boxes3d = []
-        if (proposalIdx.size > 0):
+        if (numProposals > 0):
             Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(proposalsFlat[proposalIdx],
                                                                       self.voxelnet.anchors[proposalIdx])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/proposalBoxes', summaryWriter, step=self.n_global_step)
 
         # top 10 proposals
-        # net.rpn_nms_op.rpn_nms(probs, proposals, self.voxelnet.anchors)
+
         sortedIdx = np.argsort(-probs.flatten())
         top10Proposals = proposalsFlat[sortedIdx[:10]]
 
-        Boxes3d = []
-        if (proposalIdx.size > 0):
-            Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(top10Proposals,
+        ### top visualization ###
+        Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(top10Proposals,
                                                                       self.voxelnet.anchors[sortedIdx[:10]])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/top10proposalBoxes', summaryWriter, step=self.n_global_step)
 
-        prediction_on_rgb = nud.draw_box3d_on_camera(self.batch_rgb_images[0], Boxes3d,
+
+
+        topbox = net.processing.boxes3d.draw_box3d_on_top(top, nms_proposals[:10,:,:], scores=nms_scores)
+        self.summary_image(topbox, prefix + '/top10NMSBoxes', summaryWriter, step=self.n_global_step)
+
+
+        ### to rgb image ###
+        prediction_on_rgb = nud.draw_box3d_on_camera(self.batch_rgb_images[0], nms_proposals[:10,:,:],
                                                      text_lables=[])
         self.summary_image(prediction_on_rgb, prefix + '/prediction_on_rgb', summaryWriter, step=self.n_global_step)
 
-        # debugging
+        ### Groundtruth ###
         Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(targets, self.voxelnet.anchors[pos_inds])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/Targets', summaryWriter, step=self.n_global_step)
@@ -226,6 +249,7 @@ class VoxelNetTrainer():
         self.batch_gt_labels, self.batch_gt_boxes3d, self.frame_id = \
             dataset.load()
         # get the indices of pos+neg, positive anchors as well as labels and regression targets
+
         top_inds, pos_inds, labels, targets = self.voxelnet.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
         top = data.draw_top_image(self.batch_top_view[0]).copy()
 
@@ -256,6 +280,15 @@ class VoxelNetTrainer():
             self.iteration_summary(prefix=prefix, summaryWriter=summaryWriter)
 
         return cls_loss, reg_loss, target_loss
+
+    def post_process(self, proposals, probs, minProb=0.2):
+        proposalsFlat = proposals.reshape(-1, 7)
+        proposalIdx = (probs > minProb).flatten()
+
+        ### nms ###
+        box3d_nms, nms_scores = net.rpn_nms_op.rpn_nms(probs.flatten()[proposalIdx], proposalsFlat[proposalIdx],
+                                                       self.voxelnet.anchors[proposalIdx])
+        return box3d_nms, nms_scores
 
     def save_weights(self, weights=None, dir=None):
         dir = self.ckpt_dir if dir == None else dir

@@ -39,6 +39,7 @@ class Preprocess(object):
             'Truck': 1,
             'Car': 1,
             'Tram': 1,
+            'Cyclist':3,
             #Pedestrian
             'Pedestrian':2
         }
@@ -212,7 +213,11 @@ def obj_to_gt_boxes3d(objs):
         obj = objs[n]
         b   = obj.box
         label=0
-        if obj.type=='Van' or obj.type=='Truck' or obj.type=='Car' or obj.type=='Tram':# todo : only  support 'Van'
+        if obj.type=='Van' or obj.type=='Truck' \
+                or obj.type=='Car' \
+                or obj.type=='Tram' \
+                or obj.type=='Pedestrian'\
+                or obj.type=='Cyclist':# todo : only  support 'Van'
             label = 1
 
         gt_labels [n]=label
@@ -571,6 +576,14 @@ def data_in_single_driver(raw_dir, date, drive, frames_index=None):
     if frames_index is None:
         nb_frames = len(glob.glob(img_path+"/*.png"))
         frames_index = range(nb_frames)
+        velo_path = os.path.join(raw_dir, date, date + "_drive_" + drive + "_sync", "velodyne_points", "data")
+        nb_points = len(glob.glob(velo_path + "/*.bin"))
+        if nb_frames < 2:
+            print("Not enough images in ", img_path)
+            return
+        if nb_frames != nb_points:
+            print("Not the same number of velodyne pointclouds and images! ", velo_path)
+            return
 
     # spilt large numbers of frame to small chunks
     if (cfg.DATA_SETS_TYPE == 'test'):
@@ -694,7 +707,7 @@ def preproces(mapping, frames_index):
     for key in mapping.keys():
         if mapping[key] is None:
             paths = glob.glob(os.path.join(cfg.RAW_DATA_SETS_DIR, key, '*'))
-            if len(paths) == 0:
+            if len(paths) < 2:
                 raise ValueError('can not found any file in:{}'.format(os.path.join(cfg.RAW_DATA_SETS_DIR, key, '*')))
             drivers_des=[os.path.basename(path) for path in paths]
         else:
@@ -761,10 +774,41 @@ if __name__ == '__main__':
 
         frames_index=None  #None
     elif cfg.DATA_SETS_TYPE == 'kitti':
-        data_dir = {'2011_09_26': ['0001', '0017', '0029', '0052', '0070', '0002', '0018', '0035', '0056', '0079',
+        data_dir = {'2011_09_26':
+                        ['0001','0002',
+                         '0005',
+                         '0011', '0013',
+                         '0014', '0015',
+                         '0017', '0018',
+                         '0019', '0020',
+                         '0022', '0023',
+                         '0027', '0028',
+                         '0029',           '0032',
+                         '0035',
+                         '0036',
+                         '0039',
+                         '0046',
+                         '0048',
+                         '0051',
+                         '0052',
+                         '0056',
+                         '0057',
+                         '0059',
+                         '0060',
+                         '0061',
+                         '0064',
+                         '0070',
+                         '0079',
+                         '0084',
+                         '0086',
+                         '0087',
+                         '0091']}
+
+        """['0001', '0017', '0029', '0052', '0070', '0002', '0018', '0035', '0056', '0079',
                                    '0019', '0036', '0005', '0057', '0084', '0020', '0039', '0059', '0086', '0011',
                                    '0023', '0046', '0060', '0091','0013', '0027', '0048', '0061', '0015', '0028',
-                                   '0051', '0064']}
+                                   '0051', '0064']}"""
+        #data_dir = {'2011_09_26': ['0051']}
         #data_dir= {'2011_09_26': ['0001', '0002', '0005','0011','0013','0017','0018','0020','0035','0046', '0048','0051','0057','0079']}
 
         frames_index = None # [0,5,8,12,16,20,50]

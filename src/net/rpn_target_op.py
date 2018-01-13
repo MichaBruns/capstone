@@ -160,16 +160,16 @@ def rpn_target( anchors, inside_inds, gt_labels,  gt_boxes, anchors3d, gt_boxes3
     # subsample positive labels
     num_fg = int(CFG.TRAIN.RPN_FG_FRACTION * CFG.TRAIN.RPN_BATCHSIZE)
     fg_inds = np.where(labels == 1)[0]
-    if len(fg_inds) > num_fg:
-        disable_inds = np.random.choice( fg_inds, size=(len(fg_inds) - num_fg), replace=False)
-        labels[disable_inds] = -1
+    #if len(fg_inds) > num_fg:
+    #    disable_inds = np.random.choice( fg_inds, size=(len(fg_inds) - num_fg), replace=False)
+    #    labels[disable_inds] = -1
 
     # subsample negative labels
     num_bg = CFG.TRAIN.RPN_BATCHSIZE - np.sum(labels == 1)
     bg_inds = np.where(labels == 0)[0]
-    if len(bg_inds) > num_bg:
-        disable_inds = np.random.choice(bg_inds, size=(len(bg_inds) - num_bg), replace=False)
-        labels[disable_inds] = -1
+    #if len(bg_inds) > num_bg:
+    #    disable_inds = np.random.choice(bg_inds, size=(len(bg_inds) - num_bg), replace=False)
+    #    labels[disable_inds] = -1
 
     idx_label  = np.where(labels != -1)[0]
     idx_target = np.where(labels ==  1)[0]
