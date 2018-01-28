@@ -203,4 +203,4 @@ if __name__ == '__main__':
         with BatchLoading(tags=data_splitter.val_tags, queue_size=1, require_shuffle=False,random_num=666) as validation:
             train = VoxelNetTrainer.VoxelNetTrainer(training_set = training, validation_set = validation, tag=tag,
                                                     continue_train=args.continue_train)
-            train.validate(maxIter=len(data_splitter.val_tags))
+            train.validate(maxIter=len(data_splitter.val_tags), folder='RPN', saveImages=True, saveResults=False)

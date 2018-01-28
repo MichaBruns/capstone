@@ -7,6 +7,7 @@ import os
 import subprocess
 import net.rpn_target_op
 import net.rpn_nms_op
+import config as cfg
 
 conv_net_name = 'MidConv'
 rpn_name = 'fusion'
@@ -21,9 +22,10 @@ class VoxelNet():
 
     def create_anchors(self, step):
         self.anchors, self.anchors3d = utils.boxes.create_anchors(step)
-        self.anchorsOut = self.anchors.reshape(88, 100, 2,7)
+        XSIZE = cfg.TOP_X_SIZE
+        YSIZE = cfg.TOP_Y_SIZE
+        self.anchorsOut = self.anchors.reshape(XSIZE//4, YSIZE//4, 2,7)
         self.anchors_top = net.processing.boxes3d.box3d_to_top_box(self.anchors3d)
-        here =True
 
     def build_net(self, top_shape, rgb_shape):
         self.create_anchors(4)
@@ -32,9 +34,6 @@ class VoxelNet():
             topview = self.create_input(top_shape, rgb_shape)
             conv = self.create_convnet_hc(topview)
             probs, scores, proposals = self.create_rpn(conv)
-
-        factor = top_shape[0] / probs.get_shape().as_list()[1]
-
 
         with tf.variable_scope('loss'):
             self.cls_loss, self.reg_loss, self.target_loss = \
@@ -67,6 +66,8 @@ class VoxelNet():
              targets:  positive samples's bias to ground truth (top view bounding box regression targets)
         """
         gt_top = net.processing.boxes3d.box3d_to_top_box(batch_gt_boxes3d[0])
+
+        # for now, every box is valid
         validIds = np.arange(0, len(self.anchors), dtype=np.uint32)
         pos_neg_inds, pos_inds, labels, targets,_, _ = net.rpn_target_op.rpn_target(self.anchors_top, validIds,
                                                                                batch_gt_labels[0], gt_top,
@@ -75,25 +76,14 @@ class VoxelNet():
 
     def create_input(self, top_shape, rgb_shape):
         self.top_view = tf.placeholder(shape=[None, *top_shape], dtype=tf.float32, name='top')
-        #self.rgb_images = tf.placeholder(shape=[None, *rgb_shape], dtype=tf.float32, name='rgb')
         with tf.variable_scope('lossVars'):
             self.top_inds = tf.placeholder(shape=[None], dtype=tf.int32, name='top_ind')
             self.top_pos_inds = tf.placeholder(shape=[None], dtype=tf.int32, name='top_pos_ind')
-            self.top_labels = tf.placeholder(shape=[None], dtype=tf.float32, name='top_label')
+            self.top_labels = tf.placeholder(shape=[None], dtype=tf.int32, name='top_label')
             self.top_targets = tf.placeholder(shape=[None, 7], dtype=tf.float32, name='top_target')
 
         return self.top_view
 
-    """
-    Creates the convolutional middle layers
-    """
-    def create_convnet(self, input):
-        net.layers.conv3d(input)
-
-
-    """
-    Creates the convolutional middle layers
-    """
     def create_convnet_hc(self, input):
         """
         Create the convolutional middle layers
@@ -134,21 +124,6 @@ class VoxelNet():
                 feature3 = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_6')
                 # 1/8 size
             with tf.variable_scope('Fusion'):
-                #<todo> make shape dynamic
-                '''
-                upsample1 = net.layers.deconv2d(feature1,
-                                                [int(input_shape[1]/2), int(input_shape[2]/2), 256, 128],
-                                                (-1, int(input_shape[1]/2), int(input_shape[2]/2), 256),
-                                                [1, 1, 1, 1], padding='SAME', name='Upsample1')
-                upsample2 = net.layers.deconv2d(feature2,
-                                                [int(input_shape[1]/4), int(input_shape[2]/4), 256, 128],
-                                                (-1, int(input_shape[1]/2), int(input_shape[2]/2), 256),
-                                                [1, 1, 1, 1], padding='SAME', name='Upsample2')
-                upsample3 = net.layers.deconv2d(feature3,
-                                                [int(input_shape[1]/8), int(input_shape[2]/8), 256, 256],
-                                                (-1, int(input_shape[1]/2), int(input_shape[2]/2), 256),
-                                                [1, 1, 1, 1], padding='SAME', name='Upsample3')
-                '''
                 upsample1= tf.layers.conv2d_transpose(feature1, 256, 3, strides=1, padding='same')
                 upsample2 = tf.layers.conv2d_transpose(feature2, 256, 2, strides=2)
                 upsample3 = tf.layers.conv2d_transpose(feature3, 256, 4, strides=4)
@@ -159,20 +134,18 @@ class VoxelNet():
 
             with tf.variable_scope('Regression'):
                 with tf.variable_scope('Scores') as scope:
-                    scores = tf.layers.conv2d(concat, filters=2, kernel_size=1, strides=(1, 1), padding='valid')
-                    #scores = net.layers.conv2d(concat, filters=2, kernel_size=1, strides=(1, 1), padding='valid',
-                    #              name='Scores')
-                probs =  tf.nn.sigmoid(scores) #tf.nn.softmax(scores, name='Probabilities')
+                    # create scores for each anchor and each class
+                    scores = tf.layers.conv2d(concat, filters=cfg.cfg.NUM_CLASSES * 2, kernel_size=1, strides=(1, 1), padding='valid')
+
+                scores = tf.reshape(scores, [-1, cfg.cfg.NUM_CLASSES])
+                probs = tf.nn.softmax(scores, name='Probabilities')
 
                 # 7xnum_anchors
-                reg = tf.layers.conv2d(concat, filters=14, kernel_size=1, strides=(1, 1), padding='valid',
+                reg = tf.layers.conv2d(concat, filters=7 * 2, kernel_size=1, strides=(1, 1), padding='valid',
                                          name='Map')
+                reg = tf.reshape(reg, [-1, 7])
 
-                #batch_size, img_height, img_width, img_channel = input.get_shape().as_list()
-                #proposal2, score2 = net.rpn_nms_op.tf_rpn_nms(probs, reg, self.anchors,
-                #                          1, img_width, img_height, 1, nms_thresh=0.7, min_size=1, nms_pre_topn=500, nms_post_topn=100,
-                #                       name ='nms')
-            return probs, scores ,reg#, proposal2
+            return probs, scores ,reg
 
     def create_loss(self, scores, deltas, inds, pos_inds, gt_labels, gt_targets):
         """
@@ -184,6 +157,7 @@ class VoxelNet():
         :param gt_labels: Labels of anchors
         :param gt_targets: Groundtruth delta for anchors
         :return:
+                Classification loss, regression loss and target loss
         """
 
         def modified_smooth_l1( box_preds, box_targets, sigma=3.0):
@@ -203,16 +177,11 @@ class VoxelNet():
 
             return smooth_l1
 
-        scores1      = tf.reshape(scores,[-1])
-        rpn_scores   = tf.gather(scores1,inds)  # remove ignore label
-        #rpn_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_scores,
-        #
-        #                                                                              labels=gt_labels))
+        rpn_scores   = tf.gather(scores,inds)  # remove ignore label
+        rpn_cls_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=rpn_scores,
+                                                                                      labels=gt_labels))
 
-        rpn_cls_loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(logits=rpn_scores, labels=gt_labels))
-        #rpn_cls_loss = rpn_cls_loss_0deg + rpn_cls_loss_90deg
-        deltas1       = tf.reshape(deltas,[-1,7])
+        deltas1       = deltas
         rpn_deltas    = tf.gather(deltas1, pos_inds)  # remove ignore label
 
         with tf.variable_scope('modified_smooth_l1'):

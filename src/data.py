@@ -27,22 +27,28 @@ if config.cfg.USE_CLIDAR_TO_TOP:
     assert (os.path.exists(so_path))
     SharedLib = ctypes.cdll.LoadLibrary(so_path)
 
+pos_classes = ['Car']
+
 class Preprocess(object):
 
     def __init__(self):
+
 
         self.labels_map = {
             #background
             'background':0,
             #car
-            'Van':1,
-            'Truck': 1,
+            #'Van':1,
+            #'Truck': 1,
             'Car': 1,
-            'Tram': 1,
-            'Cyclist':3,
+            #'Tram': 1,
+            #'Cyclist':3,
             #Pedestrian
-            'Pedestrian':2
+            #'Pedestrian':2
         }
+
+
+
 
         if config.cfg.SINGLE_CLASS_DETECTION==False:
             self.n_class = max([self.labels_map[key] for key in self.labels_map]) + 1
@@ -213,11 +219,7 @@ def obj_to_gt_boxes3d(objs):
         obj = objs[n]
         b   = obj.box
         label=0
-        if obj.type=='Van' or obj.type=='Truck' \
-                or obj.type=='Car' \
-                or obj.type=='Tram' \
-                or obj.type=='Pedestrian'\
-                or obj.type=='Cyclist':# todo : only  support 'Van'
+        if obj.type in pos_classes:
             label = 1
 
         gt_labels [n]=label

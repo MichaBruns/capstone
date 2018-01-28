@@ -88,11 +88,11 @@ class BatchLoading2:
         self.lodaer_processing.join()
         if self.require_log: print('exit lodaer_processing')
 
-    def keep_gt_inside_range(self, train_gt_labels, train_gt_boxes3d):
+    def keep_gt_inside_range(self, train_gt_labels, train_gt_boxes3d, obstacles):
         train_gt_labels = np.array(train_gt_labels, dtype=np.int32)
         train_gt_boxes3d = np.array(train_gt_boxes3d, dtype=np.float32)
         if train_gt_labels.shape[0] == 0:
-            return False, None, None
+            return False, None, None, None
         assert train_gt_labels.shape[0] == train_gt_boxes3d.shape[0]
 
         # get limited train_gt_boxes3d and train_gt_labels.
@@ -104,11 +104,16 @@ class BatchLoading2:
 
         # if all targets are out of range in selected top view, return True.
         if np.sum(keep) == 0:
-            return False, None, None
+            return False, None, None, None
 
         train_gt_labels = train_gt_labels[keep]
         train_gt_boxes3d = train_gt_boxes3d[keep]
-        return True, train_gt_labels, train_gt_boxes3d
+        obstacles_keep = []
+        for i in range(keep.shape[0]):
+            if(keep[i]==1):
+                obstacles_keep.append(obstacles[i])
+
+        return True, train_gt_labels, train_gt_boxes3d, obstacles_keep
 
     def load_from_one_tag(self, one_frame_tag):
         if self.is_testset:
@@ -137,7 +142,7 @@ class BatchLoading2:
 
     def get_shape(self):
         # todo for tracking, it means wasted a frame which will cause offset.
-        train_rgbs, train_tops, train_fronts, train_gt_labels, train_gt_boxes3d, _ = self.load()
+        train_rgbs, train_tops, train_fronts, train_gt_labels, train_gt_boxes3d, _, _ = self.load()
         top_shape = train_tops[0].shape
         front_shape = train_fronts[0].shape
         rgb_shape = train_rgbs[0].shape
@@ -167,8 +172,8 @@ class BatchLoading2:
 
             # only feed in frames with ground truth labels and bboxes during training, or the training nets will break.
             if not self.is_testset:
-                is_gt_inside_range, batch_gt_labels_in_range, batch_gt_boxes3d_in_range = \
-                    self.keep_gt_inside_range(labels, boxes3d)
+                is_gt_inside_range, batch_gt_labels_in_range, batch_gt_boxes3d_in_range, obstacles= \
+                    self.keep_gt_inside_range(labels, boxes3d, obstacles)
                 labels = batch_gt_labels_in_range
                 boxes3d = batch_gt_boxes3d_in_range
                 # if no gt labels inside defined range, discard this training frame.
@@ -176,7 +181,7 @@ class BatchLoading2:
                     skip_frames = True
 
         return np.array([rgb]), np.array([top]), np.array([fronts]), np.array([labels]), \
-               np.array([boxes3d]), frame_tag
+               np.array([boxes3d]), frame_tag, obstacles
 
     def find_empty_block(self):
         idx = -1

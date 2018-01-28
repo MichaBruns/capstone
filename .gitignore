@@ -1,0 +1,8 @@
+data/*
+log/*
+checkpoint/*
+src/eval/*
+*__pycache__*
+build/
+*.so
+*.a

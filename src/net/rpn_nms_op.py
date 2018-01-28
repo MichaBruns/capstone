@@ -116,18 +116,8 @@ def rpn_nms(scores, deltas, anchors):
         keep = nms(stacked, 0.2)
         if 200 > 0:
             keep = keep[:200]
-            proposals = proposals[keep, :]
             scores = scores[keep]
             proposals3d = proposals3d[keep,:,:]
-
-        # Output rois blob
-        # Our RPN implementation only supports a single input image, so all
-        # batch inds are 0
-        roi_scores=scores.squeeze()
-
-        #num_proposals = len(proposals)
-        #batch_inds = np.zeros((num_proposals, 1), dtype=np.float32)
-        #rois = np.hstack((batch_inds, proposals))
 
         return proposals3d, scores
 
