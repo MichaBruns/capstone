@@ -9,15 +9,16 @@ import net.rpn_target_op
 import net.rpn_nms_op
 import config as cfg
 
-conv_net_name = 'MidConv'
+conv_net_name = 'vgg16'
 rpn_name = 'fusion'
 
 
 
-class VoxelNet():
+class AVOD():
     def __init__(self):
-        pass
-
+        self.name = 'AVOD'
+        self.conv_net_name = conv_net_name
+        self.rpn_name = rpn_name
 
 
     def create_anchors(self, step):
@@ -28,12 +29,14 @@ class VoxelNet():
         self.anchors_top = net.processing.boxes3d.box3d_to_top_box(self.anchors3d)
 
     def build_net(self, top_shape, rgb_shape):
-        self.create_anchors(4)
+        self.create_anchors(2)
 
-        with tf.variable_scope('VoxelNet'):
-            topview = self.create_input(top_shape, rgb_shape)
-            conv = self.create_convnet_hc(topview)
-            probs, scores, proposals = self.create_rpn(conv)
+        with tf.variable_scope(self.name):
+            topview, rgb = self.create_input(top_shape, rgb_shape)
+            with tf.variable_scope(conv_net_name):
+                top_features = self.create_vgg16(topview, name_scope='lidar')
+                rgb_features = self.create_vgg16(rgb, name_scope='rgb')
+            probs, scores, proposals = self.create_rpn(top_features, rgb_features, boxes=self.anchors_top)
 
         with tf.variable_scope('loss'):
             self.cls_loss, self.reg_loss, self.target_loss = \
@@ -43,6 +46,7 @@ class VoxelNet():
             'top_view' : self.top_view,
             'top_inds':self.top_inds,
             'top_pos_inds': self.top_pos_inds,
+            'rgb': self.rgb,
             'labels':self.top_labels,
             'targets':self.top_targets,
             'cls_loss': self.cls_loss,
@@ -50,8 +54,7 @@ class VoxelNet():
             'target_loss': self.target_loss,
             'proposals': proposals,
             'scores': scores,
-            'probs':probs,
-            'conv': conv
+            'probs':probs
         }
 
     def get_targets(self, batch_gt_labels, batch_gt_boxes3d):
@@ -76,73 +79,102 @@ class VoxelNet():
 
     def create_input(self, top_shape, rgb_shape):
         self.top_view = tf.placeholder(shape=[None, *top_shape], dtype=tf.float32, name='top')
+        self.rgb = tf.placeholder(shape=[None, *rgb_shape], dtype=tf.float32, name='rgb')
         with tf.variable_scope('lossVars'):
             self.top_inds = tf.placeholder(shape=[None], dtype=tf.int32, name='top_ind')
             self.top_pos_inds = tf.placeholder(shape=[None], dtype=tf.int32, name='top_pos_ind')
             self.top_labels = tf.placeholder(shape=[None], dtype=tf.int32, name='top_label')
             self.top_targets = tf.placeholder(shape=[None, 7], dtype=tf.float32, name='top_target')
 
-        return self.top_view
+        return self.top_view, self.rgb
 
-    def create_convnet_hc(self, input):
+    def create_vgg16(self, input, name_scope):
         """
-        Create the convolutional middle layers
+        Create the a modified vgg16 encoder
         :param input: Input tensor
         :return:
         """
-        with tf.variable_scope(conv_net_name):
-            conv = net.layers.conv2d(input, filters=32, kernel_size=3, strides=(1,1), padding='same', name='Conv2D_1')
-            conv = net.layers.conv2d(conv, filters=64, kernel_size=3, strides=(2, 2), padding='same', name='Conv2D_2')
-            conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_3')
+        with tf.variable_scope(name_scope):
+            maxpoolLayer = tf.layers.MaxPooling2D((2, 2), 2, 'same', name='MaxPool')
 
-        return conv
+            # first block
+            conv = net.layers.conv2d(input, filters=32, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_1_1')
+            conv = net.layers.conv2d(conv, filters=32, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_1_3')
+            maxpool = maxpoolLayer(conv)
 
-    def create_rpn(self, input):
+            # second block
+            conv = net.layers.conv2d(maxpool, filters=64, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_2_1')
+            conv = net.layers.conv2d(conv, filters=64, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_2_3')
+            maxpool = maxpoolLayer(conv)
+
+            # third block
+            conv = net.layers.conv2d(maxpool, filters=128, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_3_1')
+            conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_3_2')
+            conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_3_3')
+            maxpool = maxpoolLayer(conv)
+
+            # fourth block
+            conv = net.layers.conv2d(maxpool, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_4_1')
+            conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_4_2')
+            conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_4_3')
+            maxpool = maxpoolLayer(conv)
+
+            # fifth block
+            conv = net.layers.conv2d(maxpool, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_5_1')
+            conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_5_2')
+            conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same',
+                                     name='Conv2D_5_3')
+
+            conv_shape = conv.get_shape().as_list()
+
+            upsample = tf.image.resize_bilinear(conv, size=[conv_shape[1]*2, conv_shape[2]*2])
+
+
+        return upsample
+
+    def create_rpn(self, inputImage, inputLidar, boxes):
         feature_maps = []
-        input_shape = input.get_shape().as_list()
         with tf.variable_scope(rpn_name):
-            with tf.variable_scope('Block1'):
-                conv = net.layers.conv2d(input, filters=128, kernel_size=3, strides=(2, 2), padding='same', name='Conv2D_1')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_2')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_3')
-                feature1 = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_4')
-                # 1/2 size
-            with tf.variable_scope('Block2'):
-                conv = net.layers.conv2d(feature1, filters=128, kernel_size=3, strides=(2, 2), padding='same', name='Conv2D_1')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_2')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_3')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_4')
-                conv = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_5')
-                feature2 = net.layers.conv2d(conv, filters=128, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_6')
-                # 1/4 size
-            with tf.variable_scope('Block3') as scope2:
-                conv = net.layers.conv2d(feature2, filters=256, kernel_size=3, strides=(2, 2), padding='same', name='Conv2D_1')
-                conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_2')
-                conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_3')
-                conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_4')
-                conv = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_5')
-                feature3 = net.layers.conv2d(conv, filters=256, kernel_size=3, strides=(1, 1), padding='same', name='Conv2D_6')
-                # 1/8 size
+            with tf.variable_scope('Bottleneck'):
+                bottlneck_image = tf.layers.conv2d(inputImage, filters=1, kernel_size=1, strides=(1, 1),
+                                                   padding='valid')
+                bottlneck_lidar = tf.layers.conv2d(inputLidar, filters=1, kernel_size=1, strides=(1, 1),
+                                                   padding='valid')
+                cr_image = tf.image.crop_and_resize(bottlneck_image, boxes=boxes,
+                                                    box_ind=tf.zeros(boxes.shape[0], dtype=tf.int32), crop_size=[3, 3])
+                cr_lidar = tf.image.crop_and_resize(bottlneck_lidar, boxes=boxes,
+                                                    box_ind=tf.zeros(boxes.shape[0], dtype=tf.int32), crop_size=[3, 3])
+
+
             with tf.variable_scope('Fusion'):
-                upsample1= tf.layers.conv2d_transpose(feature1, 256, 3, strides=1, padding='same')
-                upsample2 = tf.layers.conv2d_transpose(feature2, 256, 2, strides=2)
-                upsample3 = tf.layers.conv2d_transpose(feature3, 256, 4, strides=4)
-                feature_maps.append(upsample1)
-                feature_maps.append(upsample2)
-                feature_maps.append(upsample3)
-                concat = net.layers.concat(feature_maps)
+                concat = tf.concat([cr_image, cr_lidar] , axis=-1, name='Concat')
+                fused = tf.reduce_mean(concat, axis=-1, keep_dims=True, name='Mean')
+
 
             with tf.variable_scope('Regression'):
                 with tf.variable_scope('Scores') as scope:
                     # create scores for each anchor and each class
-                    scores = tf.layers.conv2d(concat, filters=cfg.cfg.NUM_CLASSES * 2, kernel_size=1, strides=(1, 1), padding='valid')
+                    fused = tf.reshape(fused, [-1, 3*3])
+                    scores = tf.layers.dense(fused, units=256)
+                   # scores = tf.layers.conv2d(dense, filters=cfg.cfg.NUM_CLASSES * 2, kernel_size=1, strides=(1, 1), padding='valid')
 
-                scores = tf.reshape(scores, [-1, cfg.cfg.NUM_CLASSES])
+                scores = tf.layers.dense(scores, units=cfg.cfg.NUM_CLASSES)
                 probs = tf.nn.softmax(scores, name='Probabilities')
 
                 # 7xnum_anchors
-                reg = tf.layers.conv2d(concat, filters=7 * 2, kernel_size=1, strides=(1, 1), padding='valid',
-                                         name='Map')
+                reg = tf.layers.dense(fused, units=7,  name='Map')
                 reg = tf.reshape(reg, [-1, 7])
 
             return probs, scores ,reg

@@ -1,4 +1,5 @@
 import voxelnet
+import avod
 import numpy as np
 import tensorflow as tf
 import subprocess
@@ -69,39 +70,41 @@ class VoxelNetTrainer():
         self.tag = tag
         self.n_global_step = 0
 
-        top_shape, _, _ = training_set.get_shape()
-        self.voxelnet = voxelnet.VoxelNet()
-        self.placeholder = self.voxelnet.build_net(top_shape, top_shape)
+        top_shape, _, rgb_shape = training_set.get_shape()
+        #self.voxelnet = voxelnet.VoxelNet()
+        self.network = avod.AVOD()
+        #self.placeholder = self.voxelnet.build_net(top_shape, top_shape)
+        self.placeholder = self.network.build_net(top_shape, rgb_shape)
 
         tf.summary.scalar('cls_loss', self.placeholder['cls_loss'])
         tf.summary.scalar('reg_loss', self.placeholder['reg_loss'])
         tf.summary.scalar('target_loss', self.placeholder['target_loss'])
 
-        train_targets = [voxelnet.conv_net_name, voxelnet.rpn_name]
+        train_targets = [self.network.conv_net_name, self.network.rpn_name]
 
-        self.subnet_conv = Net(prefix='VoxelNet', scope_name=voxelnet.conv_net_name, checkpoint_dir=self.ckpt_dir)
-        self.subnet_rpn = Net(prefix='VoxelNet', scope_name=voxelnet.rpn_name, checkpoint_dir=self.ckpt_dir)
+        self.subnet_conv = Net(prefix=self.network.name, scope_name=self.network.conv_net_name, checkpoint_dir=self.ckpt_dir)
+        self.subnet_rpn = Net(prefix=self.network.name, scope_name=self.network.rpn_name, checkpoint_dir=self.ckpt_dir)
 
         self.sess = tf.Session()
         with self.sess.as_default():
             with tf.variable_scope('minimize_loss'):
-                solver = tf.train.GradientDescentOptimizer(learning_rate=0.005)
+                solver = tf.train.GradientDescentOptimizer(learning_rate=0.0005)
 
                 train_var_list = []
 
                 assert train_targets != []
                 for target in train_targets:
                     # variables
-                    if target == voxelnet.conv_net_name:
+                    if target == self.network.conv_net_name:
                         train_var_list += self.subnet_conv.variables
 
-                    elif target == voxelnet.rpn_name:
+                    elif target == self.network.rpn_name:
                         train_var_list += self.subnet_rpn.variables
 
                     else:
                         ValueError('unknow train_target name')
 
-                self.solver_step = solver.minimize(self.voxelnet.target_loss, var_list=train_var_list)
+                self.solver_step = solver.minimize(self.network.target_loss, var_list=train_var_list)
                 self.sess.run(tf.global_variables_initializer(),
                               {net.layers.IS_TRAIN_PHASE: True})
 
@@ -112,12 +115,16 @@ class VoxelNetTrainer():
         self.val_summary_writer = tf.summary.FileWriter(val_writer_dir, graph=graph)
 
         if continue_train:
-            self.load_weights([voxelnet.conv_net_name, voxelnet.rpn_name])
+            self.load_weights([self.network.conv_net_name, self.network.rpn_name])
             self.load_progress()
             print("Restoring weights from iteration ", self.n_global_step)
 
         summ = tf.summary.merge_all()
         self.summ = summ
+
+        trainable_params = np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])
+
+        print("Number of trainable params: ", trainable_params)
 
     def save_progress(self):
         print('Save progress !')
@@ -148,9 +155,12 @@ class VoxelNetTrainer():
             self.batch_gt_labels, self.batch_gt_boxes3d, self.frame_id, _ = \
                 self.validation_set.load()
 
-            proposals, scores, probs, conv = self.predict(self.batch_top_view)
+            proposals, scores, probs = self.predict(self.batch_top_view)
+            # filter out proposals behind the camera
 
-            nms_proposals, nms_scores = self.post_process(proposals, probs, minProb=0.05)
+            #inFront = np.where(nms_proposals[:,0] > 2)
+
+            nms_proposals, nms_scores = self.post_process(proposals, probs, minProb=0.5)
 
             if saveImages:
                 self.save_projection(nms_proposals[0], nms_scores[0], folder)
@@ -204,11 +214,11 @@ class VoxelNetTrainer():
         """
 
         # get the indices of pos+neg, positive anchors as well as labels and regression targets
-        top_inds, pos_inds, labels, targets = self.voxelnet.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
+        top_inds, pos_inds, labels, targets = self.network.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
         top = data.draw_top_image(self.batch_top_view[0]).copy()
 
         self.log_image(step=self.n_global_step, prefix=prefix, frame_tag=self.frame_id, summary_writer=summaryWriter)
-        proposals, scores, probs, conv = self.predict(self.batch_top_view)
+        proposals, scores, probs = self.predict(self.batch_top_view, self.batch_rgb_images)
 
         nms_proposals, nms_scores = self.post_process(proposals, probs, minProb=0.1)
 
@@ -217,10 +227,11 @@ class VoxelNetTrainer():
         ######################
         for i in range(1, cfg.NUM_CLASSES):
             # reshape from [-1, NUM_CLASSES]
-            self.summary_image(np.reshape(probs[::2, i], (176, 200)), prefix + '/probabilities' + str(i) + '_Up',
+            # @TODO don't make the reshape fixed
+            self.summary_image(np.reshape(probs[::2, i], (176*2, 200*2)), prefix + '/probabilities' + str(i) + '_Up',
                                summaryWriter,
                                step=self.n_global_step)
-            self.summary_image(np.reshape(probs[1::2, i], (176, 200)), prefix + '/probabilities' + str(i) + '_Right',
+            self.summary_image(np.reshape(probs[1::2, i], (176*2, 200*2)), prefix + '/probabilities' + str(i) + '_Right',
                                summaryWriter,
                                step=self.n_global_step)
 
@@ -232,7 +243,7 @@ class VoxelNetTrainer():
         Boxes3d = []
         if (numProposals > 0):
             Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(proposals[proposalIdx],
-                                                                      self.voxelnet.anchors[proposalIdx])
+                                                                      self.network.anchors[proposalIdx])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/proposalBoxes', summaryWriter, step=self.n_global_step)
 
@@ -244,7 +255,7 @@ class VoxelNetTrainer():
 
         ### top visualization ###
         Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(top10Proposals,
-                                                                  self.voxelnet.anchors[sortedIdx[:10]])
+                                                                  self.network.anchors[sortedIdx[:10]])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/top10proposalBoxes', summaryWriter, step=self.n_global_step)
 
@@ -273,7 +284,7 @@ class VoxelNetTrainer():
         ######################
         ##    groundtruth   ##
         ######################
-        Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(targets, self.voxelnet.anchors[pos_inds])
+        Boxes3d = net.processing.boxes.box_transform_voxelnet_inv(targets, self.network.anchors[pos_inds])
         topbox = net.processing.boxes3d.draw_box3d_on_top(top, Boxes3d)
         self.summary_image(topbox, prefix + '/Targets', summaryWriter, step=self.n_global_step)
 
@@ -294,7 +305,7 @@ class VoxelNetTrainer():
             dataset.load()
         # get the indices of pos+neg, positive anchors as well as labels and regression targets
 
-        top_inds, pos_inds, labels, targets = self.voxelnet.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
+        top_inds, pos_inds, labels, targets = self.network.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
 
         fd1 = {
             self.placeholder['top_view']: self.batch_top_view,
@@ -302,6 +313,7 @@ class VoxelNetTrainer():
             self.placeholder['top_pos_inds']: pos_inds,
             self.placeholder['labels']: labels,  # ,[top_inds],
             self.placeholder['targets']: targets,
+            self.placeholder['rgb']: self.batch_rgb_images,
             net.layers.IS_TRAIN_PHASE: not validation
         }
 
@@ -333,7 +345,7 @@ class VoxelNetTrainer():
             # numQuer=np.sum(np.mod(proposalIdx, 2) == 1)
             nms_boxes_class, nms_scores_class = net.rpn_nms_op.rpn_nms(probs[:, i].flatten()[proposalIdx],
                                                                        proposals[proposalIdx],
-                                                                       self.voxelnet.anchors[proposalIdx])
+                                                                       self.network.anchors[proposalIdx])
             nms_boxes.append(nms_boxes_class)
             nms_scores.append(nms_scores_class)
 
@@ -342,36 +354,36 @@ class VoxelNetTrainer():
     def save_weights(self, weights=None, dir=None):
         dir = self.ckpt_dir if dir == None else dir
         if weights == None:
-            weights = [voxelnet.conv_net_name, voxelnet.rpn_name]
+            weights = [self.network.conv_net_name, self.network.rpn_name]
         for name in weights:
-            if name == voxelnet.conv_net_name:
+            if name == self.network.conv_net_name:
                 self.subnet_conv.save_weights(self.sess, dir=os.path.join(dir, name))
 
-            elif name == voxelnet.rpn_name:
+            elif name == self.network.rpn_name:
                 self.subnet_rpn.save_weights(self.sess, dir=os.path.join(dir, name))
             else:
                 ValueError('unknow weigths name')
 
     def load_weights(self, weights=[]):
         for name in weights:
-            if name == voxelnet.conv_net_name:
+            if name == self.network.conv_net_name:
                 self.subnet_conv.load_weights(self.sess)
-            elif name == voxelnet.rpn_name:
+            elif name == self.network.rpn_name:
                 self.subnet_rpn.load_weights(self.sess)
             else:
                 ValueError('unknow weigths name')
 
-    def predict(self, top_view):
+    def predict(self, top_view, rgb):
         fd1 = {
             self.placeholder['top_view']: top_view,
+            self.placeholder['rgb']: rgb,
             net.layers.IS_TRAIN_PHASE: False
         }
 
-        proposals, scores, probs, conv = self.sess.run([self.placeholder['proposals'],
+        proposals, scores, probs = self.sess.run([self.placeholder['proposals'],
                                                         self.placeholder['scores'],
-                                                        self.placeholder['probs'],
-                                                        self.placeholder['conv']], fd1)
-        return proposals, scores, probs, conv
+                                                        self.placeholder['probs']], fd1)
+        return proposals, scores, probs
 
     def summary_image(self, image, tag, summary_writer=None, step=None):
 
