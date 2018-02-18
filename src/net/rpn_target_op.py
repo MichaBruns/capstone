@@ -158,7 +158,7 @@ def rpn_target( anchors, inside_inds, gt_labels,  gt_boxes, anchors3d, gt_boxes3
     gt_argmax_overlaps = np.where(overlaps == gt_max_overlaps)[0]
 
     labels[max_overlaps <  CFG.TRAIN.RPN_BG_THRESH_HI] = 0   # bg label
-    labels[gt_argmax_overlaps] = gt_labels[argmax_overlaps]                          # fg label: for each gt, anchor with highest overlap
+    labels[gt_argmax_overlaps] = gt_labels[argmax_overlaps[gt_argmax_overlaps]]                          # fg label: for each gt, anchor with highest overlap
     labels[max_overlaps >= CFG.TRAIN.RPN_FG_THRESH_LO] = gt_labels[argmax_overlaps[max_overlaps >= CFG.TRAIN.RPN_FG_THRESH_LO]]   # fg label: above threshold IOU
 
     # subsample positive labels

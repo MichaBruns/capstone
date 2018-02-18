@@ -24,7 +24,7 @@ class VoxelNet():
         self.anchors, self.anchors3d = utils.boxes.create_anchors(step)
         XSIZE = cfg.TOP_X_SIZE
         YSIZE = cfg.TOP_Y_SIZE
-        self.anchorsOut = self.anchors.reshape(XSIZE//4, YSIZE//4, 2,7)
+        self.anchorsOut = self.anchors.reshape(int(XSIZE//4), int(YSIZE//4), 2,7)
         self.anchors_top = net.processing.boxes3d.box3d_to_top_box(self.anchors3d)
 
     def build_net(self, top_shape, rgb_shape):
