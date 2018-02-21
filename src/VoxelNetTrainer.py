@@ -88,7 +88,7 @@ class VoxelNetTrainer():
         self.sess = tf.Session()
         with self.sess.as_default():
             with tf.variable_scope('minimize_loss'):
-                solver = tf.train.GradientDescentOptimizer(learning_rate=0.0005)
+                solver = tf.train.GradientDescentOptimizer(learning_rate=0.01)
 
                 train_var_list = []
 
@@ -179,7 +179,7 @@ class VoxelNetTrainer():
                 print("Validation Iteration: {}/{}\nGlobal Iteration: {}".format(iter, maxIter, self.n_global_step))
                 print("Loss: ", target_loss)
 
-            if self.n_global_step % 1000 == 0:
+            if self.n_global_step % 100 == 0:
                 trainSummary = True
             else:
                 trainSummary = False
@@ -300,9 +300,10 @@ class VoxelNetTrainer():
             prefix = 'training'
 
         # get the data
-        self.batch_rgb_images, self.batch_top_view, self.batch_front_view, \
-        self.batch_gt_labels, self.batch_gt_boxes3d, self.frame_id, _ = \
-            dataset.load()
+        if step == 0:
+            self.batch_rgb_images, self.batch_top_view, self.batch_front_view, \
+            self.batch_gt_labels, self.batch_gt_boxes3d, self.frame_id, _ = \
+                dataset.load()
         # get the indices of pos+neg, positive anchors as well as labels and regression targets
 
         top_inds, pos_inds, labels, targets = self.network.get_targets(self.batch_gt_labels, self.batch_gt_boxes3d)
@@ -376,13 +377,14 @@ class VoxelNetTrainer():
     def predict(self, top_view, rgb):
         fd1 = {
             self.placeholder['top_view']: top_view,
-            self.placeholder['rgb']: rgb,
+            #self.placeholder['rgb']: rgb,
             net.layers.IS_TRAIN_PHASE: False
         }
 
         proposals, scores, probs = self.sess.run([self.placeholder['proposals'],
                                                         self.placeholder['scores'],
                                                         self.placeholder['probs']], fd1)
+
         return proposals, scores, probs
 
     def summary_image(self, image, tag, summary_writer=None, step=None):
@@ -429,3 +431,33 @@ class VoxelNetTrainer():
         for gt_bbox in self.batch_gt_boxes3d[:]:
             topview = net.processing.boxes3d.draw_box3d_on_top(top_view_log, gt_bbox)
         self.summary_image(topview, prefix + '/top_view', step=step, summary_writer=summary_writer)
+
+class VoxelNetPredictor(VoxelNetTrainer):
+    def __init__(self, tag, top_shape):
+        self.ckpt_dir = os.path.join(cfg.CHECKPOINT_DIR, tag)
+        self.tb_dir = tag if tag != None else strftime("%Y_%m_%d_%H_%M", localtime())
+        self.tag = tag
+        self.n_global_step = 0
+
+        self.network = voxelnet.VoxelNet()
+        #self.network = avod.AVOD()
+        self.placeholder = self.network.build_net(top_shape, top_shape)
+        #self.placeholder = self.network.build_net(top_shape, rgb_shape)
+
+        train_targets = [self.network.conv_net_name, self.network.rpn_name]
+
+        self.subnet_conv = Net(prefix=self.network.name, scope_name=self.network.conv_net_name,
+                               checkpoint_dir=self.ckpt_dir)
+        self.subnet_rpn = Net(prefix=self.network.name, scope_name=self.network.rpn_name, checkpoint_dir=self.ckpt_dir)
+
+        self.sess = tf.Session()
+        with self.sess.as_default():
+            with tf.variable_scope('minimize_loss'):
+                self.sess.run(tf.global_variables_initializer(),
+                              {net.layers.IS_TRAIN_PHASE: False})
+
+
+
+        self.load_weights([self.network.conv_net_name, self.network.rpn_name])
+        self.load_progress()
+        print("Restoring weights from iteration ", self.n_global_step)

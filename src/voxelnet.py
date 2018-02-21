@@ -16,6 +16,9 @@ rpn_name = 'fusion'
 
 class VoxelNet():
     def __init__(self):
+        self.name="VoxelNet"
+        self.rpn_name=rpn_name
+        self.conv_net_name=conv_net_name
         pass
 
 
