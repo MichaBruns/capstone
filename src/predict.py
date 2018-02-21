@@ -1,5 +1,4 @@
 import numpy as np
-import glob
 from sklearn.utils import shuffle
 from config import *
 # import utils.batch_loading as ub
@@ -9,7 +8,6 @@ import data
 import VoxelNetTrainer
 import net
 import cv2
-import glob
 
 def str2bool(v):
     if v.lower() in ('true'):
@@ -62,7 +60,7 @@ if __name__ == '__main__':
 
             top_exp = np.expand_dims(top, axis=0)
             proposals, scores, probs = predictor.predict(top_view=top_exp, rgb=None)
-            nms_proposals, nms_scores = predictor.post_process(proposals, probs, minProb=0.1)
+            nms_proposals, nms_scores = predictor.post_process(proposals, probs, minProb=0.02)
 
             top_img = data.draw_top_image(top).copy()
             topbox = net.processing.boxes3d.draw_box3d_on_top(top_img, nms_proposals[0][:10, :, :], scores=nms_scores[0])

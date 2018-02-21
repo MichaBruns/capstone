@@ -444,7 +444,6 @@ class VoxelNetPredictor(VoxelNetTrainer):
         self.placeholder = self.network.build_net(top_shape, top_shape)
         #self.placeholder = self.network.build_net(top_shape, rgb_shape)
 
-        train_targets = [self.network.conv_net_name, self.network.rpn_name]
 
         self.subnet_conv = Net(prefix=self.network.name, scope_name=self.network.conv_net_name,
                                checkpoint_dir=self.ckpt_dir)
